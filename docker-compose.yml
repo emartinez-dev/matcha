@@ -1,0 +1,81 @@
+version: '3'
+
+networks:
+  matcha-network:
+    name: matcha-network
+
+services:
+  postgresql:
+    image: postgres:15.5-alpine3.18
+    container_name: postgresql
+    hostname: postgresql
+    networks:
+      - matcha-network
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_DB_NAME: "${POSTGRES_DB_NAME}"
+    restart: unless-stopped
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} && psql -U ${POSTGRES_USER} -c 'SELECT datname FROM pg_database;' | grep -q ${POSTGRES_DB_NAME}"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  backend:
+    container_name: backend
+    build: backend/
+    networks:
+      - matcha-network
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_DB_NAME: "${POSTGRES_DB_NAME}"
+      DJANGO_DEBUG: "False"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+    healthcheck:
+      test: ["CMD-SHELL", "python manage.py check"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - backend:/app
+    restart: unless-stopped
+  caddy:
+    image: caddy:alpine
+    container_name: caddy
+    depends_on:
+      backend:
+        condition: service_healthy
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    networks:
+      - matcha-network
+    volumes:
+      - $PWD/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - $PWD/caddy/data:/data
+      - $PWD/caddy/conf:/config
+      - $PWD/backend/static/:/static/
+    restart: unless-stopped
+
+volumes:
+  db:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${DB_PATH}"
+  backend:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${PWD}/backend"
